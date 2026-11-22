@@ -3,14 +3,34 @@
   "version": "0.1.0",
   "description": "Post-quantum (ML-DSA-87) signatures for git commits and tags, bound to a QoreChain identity.",
   "type": "module",
-  "bin": { "qommit": "bin/qommit.mjs" },
-  "files": ["bin"],
-  "engines": { "node": ">=20" },
-  "keywords": ["git", "signing", "post-quantum", "ml-dsa", "qorechain", "supply-chain"],
+  "bin": {
+    "qommit": "bin/qommit.mjs"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "git",
+    "signing",
+    "post-quantum",
+    "ml-dsa",
+    "qorechain",
+    "supply-chain"
+  ],
   "author": "Anjali Kumari",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/Anjali7070/qommit" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Anjali7070/qommit"
+  },
   "dependencies": {
     "@qorechain/pqc": "^0.2.3"
+  },
+  "scripts": {
+    "test": "node --test"
   }
 }
