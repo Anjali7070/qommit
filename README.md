@@ -48,11 +48,12 @@ qommit: ✅ Good ML-DSA-87 (post-quantum) signature from qor1jcy2zxezq40rk7jdx54
 
 | What | Where |
 |---|---|
-| QommitRegistry contract (EVM 9800) | [`0x6F329640728572D6213193171760E88BBf57e03D`](https://explore.qore.network/address/0x6F329640728572D6213193171760E88BBf57e03D) |
+| QommitRegistry contract (EVM 9800) | [`0xB50BB93b40Ff7D7900ee3850699646c47A567482`](https://explore.qore.network/address/0xB50BB93b40Ff7D7900ee3850699646c47A567482) |
 | Author identity | `qor1jcy2zxezq40rk7jdx540mc3gd89tqlnpgcu767` |
 | Key link (hybrid-signed, via QoreX) | [`82A72A6B…`](https://explore.qore.network/tx/82A72A6B37991EFB032B4204FBEA87AA271DC2B30560AFA350E643D25306121D) |
-| Key registered in QommitRegistry | [`0x49856a4f…`](https://explore.qore.network/tx/0x49856a4fdea74a525c6b1c9dd380959a976bab9dfdc9b72336f4339208a90044) |
-| Commit `b7e3400` anchored | [`0x04fae0e5…`](https://explore.qore.network/tx/0x04fae0e5b99b94618ce2a6ca89b82135f2fc9c53b403ac38d1d5e5f68747d0c8) |
+| Key registered in QommitRegistry | [`0xdf177746…`](https://explore.qore.network/tx/0xdf177746aaa490074f902d9cda833d30739777c2867ec3e7da47bb445a40c66b) |
+| Commits `b7e3400`, `9306dcb` anchored | [`0x2864292d…`](https://explore.qore.network/tx/0x2864292dae0476e5545752894f8f9b48515349aa5249b3ac9fe43715d3d85540), [`0x4ad98f19…`](https://explore.qore.network/tx/0x4ad98f19a8c4f745c714e70be9ca43f811222140b41e961c6a0c9315a2d54fdc) |
+| Forged link with a leaked classical key | refused by QoreChain: `must include the hybrid signature extension` (`pnpm qday-attack`) |
 
 Every commit in this repository is signed with ML-DSA-87.
 
@@ -131,19 +132,30 @@ The job prints a per-commit table in the run summary and flags each failing comm
 2. **Linking.** The web page asks QoreX to `signAndBroadcast` a 1 uqor self-transfer with memo
    `qommit:bind:v1:<fingerprint>`, hybrid-signed by the wallet.
 3. **Verifying.** Qommit checks the signature, reads the address claim, then finds a successful, hybrid-signed
-   (`PQCHybridSignature`) bind transaction sent by that address for that key. It also checks QommitRegistry for a
-   revocation.
-4. **Anchoring.** `QommitRegistry.anchor` stores the first block timestamp at which a commit was signed by a
-   registered key, checked by `pqcVerify`.
+   (critical `PQCHybridSignature` extension) bind transaction sent by that address for that key, with no later
+   `qommit:unbind:v1` memo. It also checks QommitRegistry for a revocation; if that check can't run, the key isn't
+   trusted.
+4. **Anchoring.** `QommitRegistry.anchor` stores, per (commit, key), the first block timestamp at which that key
+   signed the commit, checked by `pqcVerify`.
 
 ## Repository layout
 
 | Path | What |
 |---|---|
-| `cli/` | The `qommit` signer/verifier (Node.js, `@qorechain/pqc`, viem). Tests: `npm test` |
-| `contracts/` | `QommitRegistry` (Solidity, Foundry). Tests: `pnpm forge-std && forge test`. `pnpm qday-attack`: the live classical-key attack |
+| `cli/` | The `qommit` signer/verifier (Node.js, `@qorechain/pqc`, viem). Tests: `npm test` (31) |
+| `contracts/` | `QommitRegistry` (Solidity, Foundry). Tests: `pnpm forge-std && forge test` (23). `pnpm qday-attack`: the live classical-key attack |
 | `demo/` | `qday-attack.sh`: the end-to-end Q-Day attack demo |
+| `scripts/` | `scan-secrets.mjs` (pre-commit and CI secret scan), `mutation-test.mjs` (37 planted bugs) |
+| `docs/ai/` | Build log, blind security review, red-team report, mutation results |
 | `web/` | Verifier and key-linking site (Vite + React, `@qorechain/qorex-types`, viem), live at [qommit-nine.vercel.app](https://qommit-nine.vercel.app). Run locally: `pnpm install && pnpm dev` |
+
+## Built with AI
+
+Built by pairing with an AI coding agent (Claude Code) as builder, blind security reviewer and attacker. What it
+did, what I decided, how its work was checked and where it was wrong: [AI_USAGE.md](AI_USAGE.md).
+
+**Security:** a blind AI review found 2 high and 4 medium issues; all are fixed or mitigated, each with a regression
+test ([report](docs/ai/reviews/2026-11-23-blind-review.md)). 24 attacks are tracked in [docs/ai/redteam.md](docs/ai/redteam.md).
 
 ## Credits
 
