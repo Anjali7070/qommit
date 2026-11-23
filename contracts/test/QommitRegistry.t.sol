@@ -22,8 +22,15 @@ contract MockPQC {
         return keccak256(signature) == keccak256(abi.encodePacked(keccak256(abi.encodePacked(pubkey, message))));
     }
 
+    mapping(address => uint8) public algorithm; // 0 = default ML-DSA-87 (1)
+
+    function setAlgorithm(address a, uint8 alg) external {
+        algorithm[a] = alg;
+    }
+
     function pqcKeyStatus(address account) external view returns (bool, uint8, bytes memory, bool) {
-        return (protectedAccount[account], 1, "", false);
+        uint8 alg = algorithm[account] == 0 ? 1 : algorithm[account];
+        return (protectedAccount[account], alg, "", false);
     }
 }
 
@@ -160,8 +167,7 @@ contract QommitRegistryTest is Test {
         bytes32 id = _register();
         vm.warp(1_800_000_000);
         reg.anchor(pubkey, COMMIT, _sign(pubkey, reg.anchorMessage(COMMIT)));
-        (bytes32 keyId, uint64 ts, uint64 blockNumber) = reg.anchors(COMMIT);
-        assertEq(keyId, id);
+        (uint64 ts, uint64 blockNumber) = reg.anchors(COMMIT, id);
         assertEq(ts, 1_800_000_000);
         assertEq(blockNumber, block.number);
     }
@@ -205,5 +211,48 @@ contract QommitRegistryTest is Test {
         bytes memory sig = _sign(pubkey, reg.registerMessage(signedFor));
         vm.expectRevert(QommitRegistry.InvalidSignature.selector);
         reg.register(claimed, pubkey, sig);
+    }
+
+    // ------------------------------------------------------------------ added after mutation testing
+
+    function _startsWith(bytes memory data, bytes memory prefix) internal pure returns (bool) {
+        if (data.length < prefix.length) return false;
+        for (uint256 i = 0; i < prefix.length; i++) if (data[i] != prefix[i]) return false;
+        return true;
+    }
+
+    /// Each action signs a message with its own label, so a signature for one action can never be valid for another.
+    function test_messages_areDomainSeparated() public view {
+        assertTrue(_startsWith(reg.registerMessage(anjali), "qommit:register:v1"));
+        assertTrue(_startsWith(reg.revokeMessage(), "qommit:revoke:v1"));
+        assertTrue(_startsWith(reg.anchorMessage(COMMIT), "qommit:anchor:v1"));
+    }
+
+    function test_revokeSignatureCannotRegister() public {
+        bytes memory sig = _sign(pubkey, reg.revokeMessage());
+        vm.expectRevert(QommitRegistry.InvalidSignature.selector);
+        reg.register(anjali, pubkey, sig);
+    }
+
+    // ------------------------------------------------------------------ added after the blind security review
+
+    /// M-03: someone else anchoring the same public commit first must not block the real signer's anchor.
+    function test_anchor_otherKeyCannotBlockMine() public {
+        bytes32 mine = _register();
+        bytes32 theirs = reg.register(mallory, otherPubkey, _sign(otherPubkey, reg.registerMessage(mallory)));
+        reg.anchor(otherPubkey, COMMIT, _sign(otherPubkey, reg.anchorMessage(COMMIT))); // mallory front-runs
+        reg.anchor(pubkey, COMMIT, _sign(pubkey, reg.anchorMessage(COMMIT))); // still works for anjali
+        (uint64 tsMine,) = reg.anchors(COMMIT, mine);
+        (uint64 tsTheirs,) = reg.anchors(COMMIT, theirs);
+        assertGt(tsMine, 0);
+        assertGt(tsTheirs, 0);
+    }
+
+    /// I-02: an owner whose registered key isn't ML-DSA-87 doesn't count as quantum-protected.
+    function test_register_ownerMustUseMlDsa87() public {
+        MockPQC(STATUS).setAlgorithm(anjali, 2);
+        bytes memory sig = _sign(pubkey, reg.registerMessage(anjali));
+        vm.expectRevert(abi.encodeWithSelector(QommitRegistry.OwnerNotQuantumProtected.selector, anjali));
+        reg.register(anjali, pubkey, sig);
     }
 }

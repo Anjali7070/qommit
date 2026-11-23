@@ -28,22 +28,25 @@ contract QommitRegistry {
 
     uint256 internal constant ML_DSA_87_PUBKEY_LENGTH = 2592;
 
+    /// @dev `owner` is the account the KEY claims to belong to (signed by the key). The owner's consent is published
+    ///      separately, on QoreChain's native lane, as a hybrid-signed "qommit:bind:v1:<fingerprint>" memo (QoreX can't
+    ///      sign EVM transactions yet). Integrators must check that bind before treating `owner` as proven.
     struct Key {
-        address owner; // the QoreChain account (same 20 bytes as its qor1… address)
+        address owner; // the QoreChain account the key claims (same 20 bytes as its qor1… address)
         uint64 registeredAt; // block timestamp
         uint64 revokedAt; // 0 while active
     }
 
     struct Anchor {
-        bytes32 keyId; // the key that signed the commit
         uint64 timestamp;
         uint64 blockNumber;
     }
 
     /// @notice keyId = keccak256(ML-DSA-87 public key)
     mapping(bytes32 keyId => Key) public keys;
-    /// @notice git commit (SHA-1) => first signed anchor
-    mapping(bytes20 commit => Anchor) public anchors;
+    /// @notice git commit (SHA-1) => signing key => first anchor by that key. Per key, so nobody can block another
+    ///         signer's timestamp by anchoring the same public commit first.
+    mapping(bytes20 commit => mapping(bytes32 keyId => Anchor)) public anchors;
 
     event KeyRegistered(bytes32 indexed keyId, address indexed owner, bytes pubkey);
     event KeyRevoked(bytes32 indexed keyId, address indexed owner);
@@ -80,8 +83,8 @@ contract QommitRegistry {
         if (pubkey.length != ML_DSA_87_PUBKEY_LENGTH) revert InvalidPublicKey();
         keyId = keccak256(pubkey);
         if (keys[keyId].registeredAt != 0) revert AlreadyRegistered(keyId);
-        (bool ownerRegistered,,,) = PQC_STATUS.pqcKeyStatus(owner);
-        if (!ownerRegistered) revert OwnerNotQuantumProtected(owner);
+        (bool ownerRegistered, uint8 algorithmId,,) = PQC_STATUS.pqcKeyStatus(owner);
+        if (!ownerRegistered || algorithmId != 1) revert OwnerNotQuantumProtected(owner); // 1 = ML-DSA-87
         if (!PQC_VERIFY.pqcVerify(pubkey, sig, registerMessage(owner))) revert InvalidSignature();
 
         keys[keyId] = Key({owner: owner, registeredAt: uint64(block.timestamp), revokedAt: 0});
@@ -97,12 +100,12 @@ contract QommitRegistry {
     }
 
     /// @notice Timestamp a signed git commit: proof it was signed with this post-quantum key no later than now.
-    ///         Only the first anchor of a commit is kept.
+    ///         Only the first anchor per (commit, key) is kept.
     function anchor(bytes calldata pubkey, bytes20 commit, bytes calldata sig) external {
         bytes32 keyId = _activeKey(pubkey);
-        if (anchors[commit].timestamp != 0) revert AlreadyAnchored(commit);
+        if (anchors[commit][keyId].timestamp != 0) revert AlreadyAnchored(commit);
         if (!PQC_VERIFY.pqcVerify(pubkey, sig, anchorMessage(commit))) revert InvalidSignature();
-        anchors[commit] = Anchor({keyId: keyId, timestamp: uint64(block.timestamp), blockNumber: uint64(block.number)});
+        anchors[commit][keyId] = Anchor({timestamp: uint64(block.timestamp), blockNumber: uint64(block.number)});
         emit CommitAnchored(commit, keyId, keys[keyId].owner);
     }
 
