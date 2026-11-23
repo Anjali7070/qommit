@@ -27,11 +27,6 @@ commit 6c4ac89b…
 qommit: ✅ Good ML-DSA-87 (post-quantum) signature from trusted key 85D024DB…
 ```
 
-## Status
-
-🚧 Work in progress during the fest. Day 1: git signing and verification of commits and tags works (good, untrusted,
-forged and unsigned commits are all detected). The on-chain identity registry, the web verifier and the npm package are next.
-
 ## Repository layout
 
 | Path | What |

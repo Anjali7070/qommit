@@ -18,11 +18,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ALG, generateKey, signPayload, verifyPayload, bindMemo } from "../src/core.mjs";
 import { isValidBech32 } from "../src/bech32.mjs";
+import { lookupBinding, DEFAULT_REST } from "../src/chain.mjs";
 
 const KEY_DIR = process.env.QOMMIT_HOME || join(homedir(), ".qommit");
 const KEY_FILE = join(KEY_DIR, "key.json");
 const CONFIG_FILE = join(KEY_DIR, "config.json");
 const TRUST_FILE = join(KEY_DIR, "trusted");
+const CACHE_FILE = join(KEY_DIR, "chain-cache.json");
 const SELF = fileURLToPath(import.meta.url);
 
 const b64 = (b) => Buffer.from(b).toString("base64");
@@ -153,7 +155,7 @@ function gitSign() {
   process.stderr.write(`\n[GNUPG:] SIG_CREATED D 0 0 00 ${Math.floor(Date.now() / 1000)} ${key.fingerprint}\n`);
 }
 
-function gitVerify(sigFile) {
+async function gitVerify(sigFile) {
   const payload = readFileSync(0);
   const status = (line) => process.stdout.write(`[GNUPG:] ${line}\n`);
   // Git searches for "\n[GNUPG:] GOODSIG", so GOODSIG must not be the first line. Real GPG prints NEWSIG first too.
@@ -169,17 +171,49 @@ function gitVerify(sigFile) {
     status(`BADSIG ${keyId} qommit ${r.fpr}`);
     die(`❌ BAD ${ALG} signature: ${r.reason} (key ${r.fpr}${who})`);
   }
-  const trusted = trustedFingerprints().has(r.fpr);
+  // A valid signature only proves "someone with this key signed". Trust says whose key it is.
+  // Strongest: a two-way link. The signature claims qor1X (and the claim is signed), AND qor1X published a
+  // hybrid-signed QoreChain transaction saying it owns this key. Neither side can be faked alone.
+  let trust = "none";
+  let note = "";
+  if (r.addr && process.env.QOMMIT_OFFLINE !== "1") {
+    const res = await lookupBinding(r.addr, r.fpr, { cacheFile: CACHE_FILE, rest: process.env.QOMMIT_REST || DEFAULT_REST });
+    if (res.binding) {
+      trust = "chain";
+      note = ` (linked on QoreChain, tx ${res.binding.txHash.slice(0, 12)}…)`;
+    } else if (res.error) note = ` (couldn't reach QoreChain: ${res.error})`;
+  }
+  if (trust === "none" && trustedFingerprints().has(r.fpr)) trust = "local";
+
   status(`GOODSIG ${keyId} ${r.addr || "qommit"}`);
   status(`VALIDSIG ${r.fpr} 1970-01-01 ${r.ts || 0} 0 4 0 1 10 00 ${r.fpr}`);
-  // A valid signature only proves "someone with this key signed". Trust says whether that key is someone you
-  // accept. With gpg.minTrustLevel=fully, git rejects untrusted keys. (Next: trust keys bound on-chain.)
-  status(trusted ? `TRUST_FULLY 0 qommit` : `TRUST_UNDEFINED 0 qommit`);
-  process.stderr.write(
-    trusted
-      ? `qommit: ✅ Good ${ALG} (post-quantum) signature from trusted key ${r.fpr}${who}\n`
-      : `qommit: ⚠️  Valid ${ALG} signature${who}, but key ${r.fpr} is not trusted (qommit trust <fingerprint>)\n`,
-  );
+  // With gpg.minTrustLevel=fully, git rejects anything below TRUST_FULLY.
+  status(trust === "none" ? `TRUST_UNDEFINED 0 qommit` : `TRUST_FULLY 0 qommit`);
+  const msg = {
+    chain: `✅ Good ${ALG} (post-quantum) signature from ${r.addr}${note}`,
+    local: `✅ Good ${ALG} (post-quantum) signature from locally trusted key ${r.fpr}${who}${note}`,
+    none: `⚠️  Valid ${ALG} signature${who}, but key ${r.fpr} is not linked on-chain or trusted${note}`,
+  }[trust];
+  process.stderr.write(`qommit: ${msg}\n`);
+}
+
+function cmdLink() {
+  const key = loadKey();
+  const base = process.env.QOMMIT_LINK_URL || "http://127.0.0.1:5173";
+  console.log(`Open this page and approve the transaction in QoreX (Testnet):\n  ${base}/?fpr=${key.fingerprint}`);
+  console.log(`It publishes, from your wallet, a hybrid-signed memo: ${bindMemo(key.fingerprint)}`);
+}
+
+async function cmdStatus() {
+  const key = loadKey();
+  const { address } = loadConfig();
+  console.log(`key:      ${ALG} ${key.fingerprint}`);
+  if (!address) return console.log(`identity: none (run: qommit address <qor1…>)`);
+  console.log(`identity: ${address}`);
+  const res = await lookupBinding(address, key.fingerprint, { rest: process.env.QOMMIT_REST || DEFAULT_REST });
+  if (res.error) console.log(`on-chain: couldn't reach QoreChain (${res.error})`);
+  else if (res.binding) console.log(`on-chain: ✅ linked in block ${res.binding.height}, tx ${res.binding.txHash}`);
+  else console.log(`on-chain: ✗ not linked yet. Run: qommit link`);
 }
 
 // ---------- dispatch ----------
@@ -189,14 +223,16 @@ const HELP = `qommit — post-quantum (${ALG}) signatures for git
   qommit init [--address qor1…] [--global]   create your key and make git sign with it
   qommit address [qor1…]                     show or set the QoreChain identity your signatures claim
   qommit whoami                              show your key fingerprint, identity and on-chain bind memo
+  qommit link                                link your key to your qor1 address on QoreChain (via QoreX)
+  qommit status                              check whether your key is linked on-chain
   qommit trust <fingerprint> [label]         trust another developer's key
 
 Then use git as usual: git commit, git log --show-signature, git verify-commit.`;
 
 const args = process.argv.slice(2);
-const commands = { init: cmdInit, address: cmdAddress, whoami: cmdWhoami, trust: cmdTrust };
-if (commands[args[0]]) commands[args[0]]();
+const commands = { init: cmdInit, address: cmdAddress, whoami: cmdWhoami, trust: cmdTrust, link: cmdLink, status: cmdStatus };
+if (commands[args[0]]) await commands[args[0]]();
 else if (args.some((a) => /^-[a-z]*s[a-z]*$/.test(a) && a.includes("b"))) gitSign(); // git passes -bsau <key>
-else if (args.includes("--verify")) gitVerify(args[args.indexOf("--verify") + 1]);
+else if (args.includes("--verify")) await gitVerify(args[args.indexOf("--verify") + 1]);
 else if (args[0] === "help" || args[0] === "--help" || args[0] === "-h" || !args.length) console.log(HELP);
 else die(`unknown command "${args[0]}". Run: qommit help`, 2);
