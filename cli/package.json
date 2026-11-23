@@ -1,6 +1,6 @@
 {
   "name": "qommit-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Post-quantum (ML-DSA-87) signatures for git commits and tags, bound to a QoreChain identity.",
   "type": "module",
   "bin": {
