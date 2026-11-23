@@ -1,6 +1,7 @@
 // On-chain identity lookups: which qommit keys has a qor1 address linked with a hybrid-signed transaction?
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 
 export const DEFAULT_REST = "https://api-testnet.qore.host"; // qorechain-diana
 const BIND_PREFIX = "qommit:bind:v1:";
@@ -61,8 +62,12 @@ export async function lookupBinding(address, fpr, { cacheFile, rest = DEFAULT_RE
   try {
     const bindings = await fetchBindings(address, rest);
     if (cacheFile) {
-      cache[address] = { fetchedAt: now, bindings };
-      writeFileSync(cacheFile, JSON.stringify(cache, null, 2));
+      // The cache is only a speed-up: failing to write it (e.g. no ~/.qommit on a CI machine) must not fail the lookup.
+      try {
+        mkdirSync(dirname(cacheFile), { recursive: true, mode: 0o700 });
+        cache[address] = { fetchedAt: now, bindings };
+        writeFileSync(cacheFile, JSON.stringify(cache, null, 2));
+      } catch {}
     }
     return { binding: bindings.find((b) => b.fpr === fpr) ?? null };
   } catch (e) {

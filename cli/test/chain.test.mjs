@@ -52,3 +52,19 @@ test("empty or missing responses are safe", () => {
   assert.deepEqual(parseBindings({}, ME), []);
   assert.deepEqual(parseBindings(null, ME), []);
 });
+
+test("a cache directory that doesn't exist doesn't break the lookup (fresh CI machine)", async () => {
+  const { lookupBinding } = await import("../src/chain.mjs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const cacheFile = join(tmpdir(), `qommit-test-${process.pid}-${Date.now()}`, "missing", "chain-cache.json");
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ tx_responses: [tx()] }));
+  try {
+    const res = await lookupBinding(ME, FPR, { cacheFile, rest: "http://test" });
+    assert.equal(res.error, undefined);
+    assert.equal(res.binding?.fpr, FPR);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
