@@ -25,11 +25,14 @@ const KEY_DIR = process.env.QOMMIT_HOME || join(homedir(), ".qommit");
 const KEY_FILE = join(KEY_DIR, "key.json");
 const CONFIG_FILE = join(KEY_DIR, "config.json");
 const TRUST_FILE = join(KEY_DIR, "trusted");
-const CACHE_FILE = join(KEY_DIR, "chain-cache.json");
+const CACHE_FILE = join(KEY_DIR, "chain-cache.json"); // identity links, keyed by qor1 address
+const REVOCATION_CACHE = join(KEY_DIR, "registry-cache.json"); // revocation status, keyed by fingerprint (separate file)
 const SELF = fileURLToPath(import.meta.url);
 
 const b64 = (b) => Buffer.from(b).toString("base64");
 const unb64 = (s) => new Uint8Array(Buffer.from(s, "base64"));
+// Anything we print may come from a signature or a commit: strip control characters (terminal escapes, \r, \n).
+const clean = (v) => String(v ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
 const die = (msg, code = 1) => {
   process.stderr.write(`qommit: ${msg}\n`);
   process.exit(code);
@@ -190,11 +193,16 @@ async function gitVerify(sigFile) {
   if (trust === "none" && trustedFingerprints().has(r.fpr)) trust = "local";
 
   // A revoked key (e.g. reported lost) must not verify, even if it was linked or trusted before.
-  const revokedAt = process.env.QOMMIT_OFFLINE === "1" ? 0 : await registryRevokedAt(r.publicKey, r.fpr);
-  if (revokedAt) {
+  const rev = process.env.QOMMIT_OFFLINE === "1" ? { revokedAt: 0 } : await registryRevocation(r.publicKey, r.fpr);
+  if (rev.revokedAt) {
     status(`REVKEYSIG ${keyId} ${r.addr || "qommit"}`);
     status(`TRUST_UNDEFINED 0 qommit`);
-    die(`❌ key ${r.fpr}${who} was REVOKED in QommitRegistry at ${new Date(revokedAt * 1000).toISOString()}`);
+    die(`❌ key ${r.fpr}${who} was REVOKED in QommitRegistry at ${new Date(rev.revokedAt * 1000).toISOString()}`);
+  }
+  if (rev.error && trust !== "none") {
+    // Fail safe: if we can't confirm the key isn't revoked, don't call it trusted.
+    trust = "none";
+    note = ` (couldn't check revocation: ${clean(rev.error)})`;
   }
 
   status(`GOODSIG ${keyId} ${r.addr || "qommit"}`);
@@ -206,24 +214,33 @@ async function gitVerify(sigFile) {
     local: `✅ Good ${ALG} (post-quantum) signature from locally trusted key ${r.fpr}${who}${note}`,
     none: `⚠️  Valid ${ALG} signature${who}, but key ${r.fpr} is not linked on-chain or trusted${note}`,
   }[trust];
-  process.stderr.write(`qommit: ${msg}\n`);
+  process.stderr.write(`qommit: ${clean(msg)}\n`);
 }
 
-// Registry revocation check, cached for an hour so `git log` stays fast. Unreachable registry = not revoked (fail-open
-// here is deliberate: the signature and on-chain link were already verified; revocation is an extra layer).
-async function registryRevokedAt(publicKey, fpr) {
-  const cache = existsSync(CACHE_FILE) ? JSON.parse(readFileSync(CACHE_FILE, "utf8")) : {};
-  const k = `registry:${fpr}`;
-  if (cache[k] && Date.now() - cache[k].fetchedAt < 60 * 60 * 1000) return cache[k].revokedAt;
+// Registry revocation status, cached in its own file. "Revoked" is cached for good (revocation is permanent);
+// "not revoked" for 10 minutes. Returns { revokedAt } or { error } when the registry couldn't be read.
+async function registryRevocation(publicKey, fpr) {
+  let cache = {};
   try {
-    const { revokedAt } = await readKey(publicKey);
-    cache[k] = { fetchedAt: Date.now(), revokedAt };
-    mkdirSync(KEY_DIR, { recursive: true, mode: 0o700 });
-    writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
-    return revokedAt;
-  } catch {
-    return 0;
+    const v = JSON.parse(readFileSync(REVOCATION_CACHE, "utf8"));
+    if (v && typeof v === "object" && !Array.isArray(v)) cache = v;
+  } catch {}
+  const hit = Object.hasOwn(cache, fpr) ? cache[fpr] : null;
+  if (hit && typeof hit.revokedAt === "number" && typeof hit.fetchedAt === "number") {
+    if (hit.revokedAt || Date.now() - hit.fetchedAt < 10 * 60 * 1000) return { revokedAt: hit.revokedAt };
   }
+  let revokedAt;
+  try {
+    ({ revokedAt } = await readKey(publicKey));
+  } catch (e) {
+    return { error: e?.shortMessage || e?.message || String(e) };
+  }
+  try {
+    cache[fpr] = { fetchedAt: Date.now(), revokedAt };
+    mkdirSync(KEY_DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(REVOCATION_CACHE, JSON.stringify(cache, null, 2));
+  } catch {} // the cache is only a speed-up
+  return { revokedAt };
 }
 
 function cmdLink() {
@@ -273,12 +290,13 @@ async function cmdAnchor() {
   const ref = process.argv[3] ?? "HEAD";
   const commit = execFileSync("git", ["rev-parse", "--verify", `${ref}^{commit}`], { encoding: "utf8" }).trim();
   if (!/^[0-9a-f]{40}$/.test(commit)) die(`not a SHA-1 commit: ${commit}`);
-  const existing = await readAnchor(commit);
+  const key = loadKey();
+  const existing = await readAnchor(commit, key.publicKey); // your own anchor; other keys' anchors don't count
   if (existing.timestamp) {
     return console.log(`✓ ${commit.slice(0, 7)} already anchored at ${new Date(existing.timestamp * 1000).toISOString()} (block ${existing.blockNumber})`);
   }
-  const hash = await anchorCommit(loadKey(), commit, relayer());
-  const a = await readAnchor(commit);
+  const hash = await anchorCommit(key, commit, relayer());
+  const a = await readAnchor(commit, key.publicKey);
   console.log(`✓ Anchored ${commit.slice(0, 7)}: proof it was signed with your post-quantum key by ${new Date(a.timestamp * 1000).toISOString()}
   tx ${EXPLORER}${hash}`);
 }
@@ -294,6 +312,9 @@ const LABELS = {
   E: "⚠️ classical or unreadable signature",
 };
 
+// GitHub workflow-command data escaping, so commit text can't inject commands.
+const ghEscape = (v) => v.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A").replace(/::/g, ": :");
+
 async function cmdVerify() {
   const range = process.argv.slice(3).find((a) => !a.startsWith("--")) ?? "HEAD";
   const allowUnlinked = flag("--allow-unlinked");
@@ -303,13 +324,21 @@ async function cmdVerify() {
     // Git routes each x509 signature to this program, which does the ML-DSA-87 check and the on-chain identity lookup.
     out = execFileSync(
       "git",
-      ["-c", `gpg.x509.program=${SELF}`, "-c", "gpg.minTrustLevel=undefined", "log", "--no-merges", "--format=%H%x09%G?%x09%GS%x09%GF%x09%s", range],
+      [
+        "-c", `gpg.x509.program=${SELF}`,
+        // Only Qommit signatures count: GPG/SSH signatures must not pass as "quantum-signed".
+        "-c", "gpg.program=false", "-c", "gpg.ssh.program=false",
+        "-c", "gpg.minTrustLevel=undefined",
+        // Merge commits included: an unsigned merge can carry any change.
+        "log", "--format=%H%x09%G?%x09%GS%x09%GF%x09%s", range,
+      ],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 },
     );
   } catch {
     die(`could not read commits for "${range}" (in CI, check out with fetch-depth: 0)`);
   }
-  const rows = out.trim() ? out.trim().split("\n").map((l) => l.split("\t")) : [];
+  const rows = out.trim() ? out.trim().split("\n").map((l) => l.split("\t").map(clean)) : [];
+  if (!rows.length) die(`no commits in "${range}": refusing to report an empty range as a pass`);
   const ok = new Set(allowUnlinked ? ["G", "U"] : ["G"]);
   let failed = 0;
   for (const row of rows) {
@@ -324,13 +353,13 @@ async function cmdVerify() {
       why = res.error ? `  (couldn't reach QoreChain: ${res.error})` : res.binding ? "" : "  (no on-chain link for this key)";
     }
     console.log(`${sha.slice(0, 7)}  ${LABELS[status]}${signer ? `  ${signer}` : ""}  ${subject}${why}`);
-    if (!pass && gh) console.log(`::error title=Qommit::${sha.slice(0, 7)} ${LABELS[status]}: ${subject}`);
+    if (!pass && gh) console.log(`::error title=Qommit::${ghEscape(`${sha.slice(0, 7)} ${LABELS[status]}: ${subject}`)}`);
   }
   const summary = `${rows.length - failed}/${rows.length} commits pass (${allowUnlinked ? "quantum-signed" : "quantum-signed with an on-chain identity"})`;
   console.log(`\n${failed ? "✗" : "✓"} ${summary}`);
   if (gh && process.env.GITHUB_STEP_SUMMARY) {
     const md = [`### 🛡️ Qommit: ${summary}`, "", "| Commit | Status | Signer | Subject |", "|---|---|---|---|",
-      ...rows.map(([sha, st, signer, , subject]) => `| \`${sha.slice(0, 7)}\` | ${LABELS[LABELS[st] ? st : "E"]} | ${signer || ""} | ${subject.replace(/\|/g, "\\|")} |`)];
+      ...rows.map(([sha, st, signer, , subject]) => `| \`${sha.slice(0, 7)}\` | ${LABELS[LABELS[st] ? st : "E"]} | ${signer || ""} | ${subject.replace(/\|/g, "\\|").replace(/`/g, "'")} |`)];
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, md.join("\n") + "\n");
   }
   if (failed) process.exit(1);

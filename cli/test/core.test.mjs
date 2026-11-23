@@ -77,3 +77,40 @@ test("bech32 decode round-trips and gives the 0x account bytes", async () => {
   );
   assert.throws(() => decodeBech32("qor1notvalid"));
 });
+
+// ── tests added after mutation testing (docs/ai/mutation.md) ──
+
+test("an attacker's own valid signature can't claim someone else's fingerprint", () => {
+  // The attacker signs with their own key (valid ML-DSA signature) but writes the victim's fingerprint, hoping the
+  // verifier trusts the fingerprint's on-chain identity link.
+  const body = decode(signPayload(other, payload, { addr: ADDR }));
+  body.fpr = key.fingerprint;
+  const r = verifyPayload(encode(body), payload);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /fingerprint/);
+});
+
+test("a valid signature relabelled with another version or algorithm is rejected", () => {
+  const good = decode(signPayload(key, payload, { addr: ADDR }));
+  for (const change of [{ v: 3 }, { alg: "ML-DSA-44" }, { alg: "ml-dsa-87" }, { v: "2" }]) {
+    assert.equal(verifyPayload(encode({ ...good, ...change }), payload).ok, false, JSON.stringify(change));
+  }
+});
+
+test("the bind memo the CLI produces is what the on-chain parser accepts", async () => {
+  const { parseBindings } = await import("../src/chain.mjs");
+  const tx = {
+    txhash: "AA",
+    height: "1",
+    timestamp: "t",
+    code: 0,
+    tx: {
+      body: {
+        memo: bindMemo(key.fingerprint),
+        messages: [{ "@type": "/cosmos.bank.v1beta1.MsgSend", from_address: ADDR }],
+        extension_options: [{ "@type": "/qorechain.pqc.v1.PQCHybridSignature" }],
+      },
+    },
+  };
+  assert.deepEqual(parseBindings({ tx_responses: [tx] }, ADDR).map((b) => b.fpr), [key.fingerprint]);
+});

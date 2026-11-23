@@ -1,6 +1,7 @@
 // Core signing logic, kept free of file and git I/O so it can be unit-tested.
 
 import { mldsa87, pubkeyHash } from "@qorechain/pqc";
+import { isValidBech32 } from "./bech32.mjs";
 
 export const ALG = "ML-DSA-87";
 export const ARMOR_BEGIN = "-----BEGIN SIGNED MESSAGE-----"; // the prefix git uses to recognise x509 signatures
@@ -45,8 +46,15 @@ export function verifyPayload(armored, payload) {
   } catch {
     return { ok: false, reason: "unreadable signature" };
   }
-  const { v, alg, fpr, addr = "", ts = 0 } = body;
+  const { v, alg, fpr } = body;
   if ((v !== 1 && v !== 2) || alg !== ALG) return { ok: false, reason: `unsupported signature (${alg} v${v})` };
+  if (typeof fpr !== "string" || !/^[0-9A-F]{40}$/.test(fpr)) return { ok: false, reason: "malformed fingerprint" };
+  // v1 never signed an identity claim or timestamp, so any such fields in a v1 body are unsigned: ignore them.
+  const addr = v === 1 ? "" : body.addr ?? "";
+  const ts = v === 1 ? 0 : body.ts ?? 0;
+  // The claim and timestamp end up in git's status lines and on screen: accept only a real qor1 address and an integer.
+  if (addr !== "" && !isValidBech32(addr, "qor")) return { ok: false, reason: "identity claim is not a valid qor1 address", fpr };
+  if (!Number.isSafeInteger(ts) || ts < 0) return { ok: false, reason: "malformed timestamp", fpr };
   const publicKey = unb64(body.pk ?? "");
   // The fingerprint inside the signature must really be the hash of the embedded key.
   if (fingerprintOf(publicKey) !== fpr) return { ok: false, reason: "fingerprint does not match key", fpr, addr, ts, v };
@@ -56,3 +64,5 @@ export function verifyPayload(armored, payload) {
 
 /** The memo for the on-chain binding transaction: "qor1… owns key <fingerprint>". Fits QoreX's 256-byte memo limit. */
 export const bindMemo = (fpr) => `qommit:bind:v1:${fpr}`;
+/** The memo that withdraws a binding (e.g. a key was linked by mistake or by a phishing link). */
+export const unbindMemo = (fpr) => `qommit:unbind:v1:${fpr}`;

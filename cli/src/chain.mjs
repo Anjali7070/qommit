@@ -5,9 +5,10 @@ import { dirname } from "node:path";
 
 export const DEFAULT_REST = "https://api-testnet.qore.host"; // qorechain-diana
 const BIND_PREFIX = "qommit:bind:v1:";
+const UNBIND_PREFIX = "qommit:unbind:v1:";
 const HYBRID_EXT = "/qorechain.pqc.v1.PQCHybridSignature";
 const MSG_SEND = "/cosmos.bank.v1beta1.MsgSend";
-const POSITIVE_TTL_MS = 24 * 60 * 60 * 1000; // a found link is stable; re-check daily
+const POSITIVE_TTL_MS = 10 * 60 * 1000; // a link can be withdrawn (unbind), so re-check every 10 minutes
 const NEGATIVE_TTL_MS = 5 * 60 * 1000; // "not linked yet" may change soon
 
 /**
@@ -16,19 +17,24 @@ const NEGATIVE_TTL_MS = 5 * 60 * 1000; // "not linked yet" may change soon
  * hybrid ML-DSA-87 signature extension.
  */
 export function parseBindings(txSearch, address) {
-  const out = [];
+  // Replay bind/unbind statements oldest-first; a key counts if its latest statement is "bind".
+  const events = [];
   for (const r of txSearch?.tx_responses ?? []) {
     const body = r?.tx?.body ?? {};
     const memo = body.memo ?? "";
-    if (r.code !== 0 || !memo.startsWith(BIND_PREFIX)) continue;
-    const fpr = memo.slice(BIND_PREFIX.length).toUpperCase();
+    const kind = memo.startsWith(BIND_PREFIX) ? "bind" : memo.startsWith(UNBIND_PREFIX) ? "unbind" : null;
+    if (r.code !== 0 || !kind) continue;
+    const fpr = memo.slice(kind === "bind" ? BIND_PREFIX.length : UNBIND_PREFIX.length).toUpperCase();
     if (!/^[0-9A-F]{40}$/.test(fpr)) continue;
     const fromSelf = (body.messages ?? []).some((m) => m["@type"] === MSG_SEND && m.from_address === address);
-    const exts = [...(body.extension_options ?? []), ...(body.non_critical_extension_options ?? [])];
-    const hybrid = exts.some((e) => e["@type"] === HYBRID_EXT);
-    if (fromSelf && hybrid) out.push({ fpr, txHash: r.txhash, height: Number(r.height), time: r.timestamp });
+    // Only a critical extension counts: a non-critical one may be ignored by nodes, so it proves nothing.
+    const hybrid = (body.extension_options ?? []).some((e) => e["@type"] === HYBRID_EXT);
+    if (fromSelf && hybrid) events.push({ kind, fpr, txHash: r.txhash, height: Number(r.height), time: r.timestamp });
   }
-  return out;
+  events.sort((a, b) => a.height - b.height);
+  const latest = new Map();
+  for (const e of events) latest.set(e.fpr, e);
+  return [...latest.values()].filter((e) => e.kind === "bind").map(({ kind, ...b }) => b).sort((a, b) => b.height - a.height);
 }
 
 async function fetchBindings(address, rest) {
@@ -53,8 +59,9 @@ async function fetchBindings(address, rest) {
  */
 export async function lookupBinding(address, fpr, { cacheFile, rest = DEFAULT_REST, now = Date.now() } = {}) {
   const cache = cacheFile && existsSync(cacheFile) ? safeJson(readFileSync(cacheFile, "utf8")) : {};
-  const entry = cache[address];
-  if (entry) {
+  const entry = Object.hasOwn(cache, address) ? cache[address] : undefined;
+  const valid = entry && typeof entry.fetchedAt === "number" && Array.isArray(entry.bindings);
+  if (valid) {
     const hit = entry.bindings.find((b) => b.fpr === fpr);
     const ttl = hit ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS;
     if (now - entry.fetchedAt < ttl) return { binding: hit ?? null, cached: true };
@@ -77,7 +84,8 @@ export async function lookupBinding(address, fpr, { cacheFile, rest = DEFAULT_RE
 
 function safeJson(s) {
   try {
-    return JSON.parse(s);
+    const v = JSON.parse(s);
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
   } catch {
     return {};
   }

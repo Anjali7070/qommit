@@ -53,11 +53,15 @@ test("empty or missing responses are safe", () => {
   assert.deepEqual(parseBindings(null, ME), []);
 });
 
-test("a cache directory that doesn't exist doesn't break the lookup (fresh CI machine)", async () => {
+test("an unwritable cache doesn't break the lookup (fresh CI machine)", async () => {
   const { lookupBinding } = await import("../src/chain.mjs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const cacheFile = join(tmpdir(), `qommit-test-${process.pid}-${Date.now()}`, "missing", "chain-cache.json");
+  const { writeFileSync } = await import("node:fs");
+  // A cache path that can never be created: its "parent directory" is a regular file.
+  const blocker = join(tmpdir(), `qommit-test-${process.pid}-${Date.now()}`);
+  writeFileSync(blocker, "not a directory");
+  const cacheFile = join(blocker, "missing", "chain-cache.json");
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify({ tx_responses: [tx()] }));
   try {
