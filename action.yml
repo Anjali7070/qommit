@@ -1,0 +1,50 @@
+name: Qommit verify
+description: Fail the build unless commits are quantum-signed (ML-DSA-87) with an identity verified on QoreChain.
+author: Anjali Kumari
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  range:
+    description: >
+      Commits to check (git revision range). Default: the pull request's commits, or the commits of the push.
+    required: false
+    default: ""
+  allow-unlinked:
+    description: "Also accept quantum-signed commits whose key isn't linked to a QoreChain identity (true/false)."
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: Install qommit
+      shell: bash
+      run: npm ci --prefix "$GITHUB_ACTION_PATH/cli" --omit=dev --no-audit --no-fund
+
+    - name: Verify commits
+      shell: bash
+      env:
+        # Passed through env (not ${{ }} in the script) so untrusted values can't inject shell code.
+        INPUT_RANGE: ${{ inputs.range }}
+        INPUT_ALLOW_UNLINKED: ${{ inputs.allow-unlinked }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        PUSH_BEFORE: ${{ github.event.before }}
+        PUSH_AFTER: ${{ github.sha }}
+      run: |
+        range="$INPUT_RANGE"
+        if [ -z "$range" ] && [ -n "$PR_BASE" ]; then range="$PR_BASE..$PR_HEAD"; fi
+        if [ -z "$range" ] && [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+          range="$PUSH_BEFORE..$PUSH_AFTER"
+        fi
+        [ -z "$range" ] && range="HEAD"
+        flags=()
+        [ "$INPUT_ALLOW_UNLINKED" = "true" ] && flags+=(--allow-unlinked)
+        echo "Checking $range"
+        node "$GITHUB_ACTION_PATH/cli/bin/qommit.mjs" verify "$range" "${flags[@]}"

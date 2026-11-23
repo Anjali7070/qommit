@@ -1,6 +1,6 @@
 # 🛡️ Qommit
 
-[![npm](https://img.shields.io/npm/v/qommit-cli?color=4b3cf5)](https://www.npmjs.com/package/qommit-cli) [![Quantum-signed with Qommit](https://img.shields.io/badge/commits-quantum--signed%20(ML--DSA--87)-4b3cf5)](https://qommit-nine.vercel.app/?repo=Anjali7070/qommit)
+[![CI](https://github.com/Anjali7070/qommit/actions/workflows/ci.yml/badge.svg)](https://github.com/Anjali7070/qommit/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/qommit-cli?color=4b3cf5)](https://www.npmjs.com/package/qommit-cli) [![Quantum-signed with Qommit](https://img.shields.io/badge/commits-quantum--signed%20(ML--DSA--87)-4b3cf5)](https://qommit-nine.vercel.app/?repo=Anjali7070/qommit)
 
 **Quantum-proof signatures for your git commits, bound to your QoreChain identity.**
 
@@ -78,10 +78,34 @@ git log --show-signature -1
 | `qommit anchor [commit]` | Timestamp a commit on-chain: proof it was quantum-signed before a given block |
 | `qommit revoke --yes` | Permanently revoke your key |
 | `qommit trust <fingerprint>` | Trust a key locally without an on-chain link |
+| `qommit verify [range] [--allow-unlinked]` | Check every commit in a range; exit 1 on failure (CI) |
 
 `register`, `anchor` and `revoke` are EVM transactions, so they need a relayer account that pays the gas and has a
 registered ML-DSA-87 key and an open EVM window (`cd contracts && pnpm window register && pnpm window open`). The
 relayer can't change what gets recorded, because the contract checks the Qommit key's own signature.
+
+## Use it in CI (GitHub Action)
+
+Fail a pull request unless every commit is quantum-signed with an identity verified on QoreChain:
+
+```yaml
+# .github/workflows/qommit.yml
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  qommit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: Anjali7070/qommit@main
+        # with:
+        #   allow-unlinked: true   # accept quantum-signed commits without an on-chain identity
+```
+
+The job prints a per-commit table in the run summary and flags each failing commit. Locally, the same check is
+`qommit verify origin/main..HEAD`. This repository runs it on every push.
 
 ## How it works
 

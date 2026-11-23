@@ -283,6 +283,52 @@ async function cmdAnchor() {
   tx ${EXPLORER}${hash}`);
 }
 
+// ---------- verify a range of commits (for CI) ----------
+
+const LABELS = {
+  G: "✅ quantum-signed, identity verified",
+  U: "🟡 quantum-signed, identity not linked",
+  B: "❌ bad signature",
+  R: "⛔ signed by a revoked key",
+  N: "○ not signed",
+  E: "⚠️ classical or unreadable signature",
+};
+
+async function cmdVerify() {
+  const range = process.argv.slice(3).find((a) => !a.startsWith("--")) ?? "HEAD";
+  const allowUnlinked = flag("--allow-unlinked");
+  const gh = process.env.GITHUB_ACTIONS === "true";
+  let out;
+  try {
+    // Git routes each x509 signature to this program, which does the ML-DSA-87 check and the on-chain identity lookup.
+    out = execFileSync(
+      "git",
+      ["-c", `gpg.x509.program=${SELF}`, "-c", "gpg.minTrustLevel=undefined", "log", "--no-merges", "--format=%H%x09%G?%x09%GS%x09%s", range],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 },
+    );
+  } catch {
+    die(`could not read commits for "${range}" (in CI, check out with fetch-depth: 0)`);
+  }
+  const rows = out.trim() ? out.trim().split("\n").map((l) => l.split("\t")) : [];
+  const ok = new Set(allowUnlinked ? ["G", "U"] : ["G"]);
+  let failed = 0;
+  for (const [sha, st, signer, subject] of rows) {
+    const status = LABELS[st] ? st : "E";
+    const pass = ok.has(status);
+    if (!pass) failed++;
+    console.log(`${sha.slice(0, 7)}  ${LABELS[status]}${signer ? `  ${signer}` : ""}  ${subject}`);
+    if (!pass && gh) console.log(`::error title=Qommit::${sha.slice(0, 7)} ${LABELS[status]}: ${subject}`);
+  }
+  const summary = `${rows.length - failed}/${rows.length} commits pass (${allowUnlinked ? "quantum-signed" : "quantum-signed with an on-chain identity"})`;
+  console.log(`\n${failed ? "✗" : "✓"} ${summary}`);
+  if (gh && process.env.GITHUB_STEP_SUMMARY) {
+    const md = [`### 🛡️ Qommit: ${summary}`, "", "| Commit | Status | Signer | Subject |", "|---|---|---|---|",
+      ...rows.map(([sha, st, signer, subject]) => `| \`${sha.slice(0, 7)}\` | ${LABELS[LABELS[st] ? st : "E"]} | ${signer || ""} | ${subject.replace(/\|/g, "\\|")} |`)];
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, md.join("\n") + "\n");
+  }
+  if (failed) process.exit(1);
+}
+
 // ---------- dispatch ----------
 
 const HELP = `qommit — post-quantum (${ALG}) signatures for git
@@ -296,11 +342,12 @@ const HELP = `qommit — post-quantum (${ALG}) signatures for git
   qommit anchor [commit]                     timestamp a commit on-chain (default HEAD)
   qommit revoke --yes                        permanently revoke your key (e.g. lost laptop)
   qommit trust <fingerprint> [label]         trust another developer's key
+  qommit verify [range] [--allow-unlinked]   check every commit in a range (exit 1 on failure; for CI)
 
 Then use git as usual: git commit, git log --show-signature, git verify-commit.`;
 
 const args = process.argv.slice(2);
-const commands = { init: cmdInit, address: cmdAddress, whoami: cmdWhoami, trust: cmdTrust, link: cmdLink, status: cmdStatus, register: cmdRegister, revoke: cmdRevoke, anchor: cmdAnchor };
+const commands = { init: cmdInit, address: cmdAddress, whoami: cmdWhoami, trust: cmdTrust, link: cmdLink, status: cmdStatus, register: cmdRegister, revoke: cmdRevoke, anchor: cmdAnchor, verify: cmdVerify };
 if (commands[args[0]]) await commands[args[0]]();
 else if (args.some((a) => /^-[a-z]*s[a-z]*$/.test(a) && a.includes("b"))) gitSign(); // git passes -bsau <key>
 else if (args.includes("--verify")) await gitVerify(args[args.indexOf("--verify") + 1]);
