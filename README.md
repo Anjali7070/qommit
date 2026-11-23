@@ -84,6 +84,22 @@ git log --show-signature -1
 registered ML-DSA-87 key and an open EVM window (`cd contracts && pnpm window register && pnpm window open`). The
 relayer can't change what gets recorded, because the contract checks the Qommit key's own signature.
 
+## See the attack: `demo/qday-attack.sh`
+
+A 2-minute, fully reproducible walkthrough (used in the demo video):
+
+1. **Today:** Alice signs a commit with a normal SSH (Ed25519) key, and git says *Good*.
+2. **Q-Day:** a quantum computer recovers Alice's private key from her public key (simulated). The attacker
+   forges a backdoor commit as Alice, and git **still says Good**. GitHub would show *Verified*.
+3. **With Qommit:** a stranger checks the repo against QoreChain only. A tampered commit gives **BAD**. An impostor
+   post-quantum key claiming Alice's identity is **not linked, so it's rejected**.
+4. **On-chain:** the attacker uses a leaked *classical* wallet key to fake the identity link. **QoreChain refuses
+   the transaction**: `has a registered PQC key and must include the hybrid signature extension (hybrid mode: required)`.
+
+```sh
+./demo/qday-attack.sh   # Act 3 sends a real (rejected) testnet transaction; needs contracts/.env
+```
+
 ## Use it in CI (GitHub Action)
 
 Fail a pull request unless every commit is quantum-signed with an identity verified on QoreChain:
@@ -125,7 +141,8 @@ The job prints a per-commit table in the run summary and flags each failing comm
 | Path | What |
 |---|---|
 | `cli/` | The `qommit` signer/verifier (Node.js, `@qorechain/pqc`, viem). Tests: `npm test` |
-| `contracts/` | `QommitRegistry` (Solidity, Foundry). Tests: `pnpm forge-std && forge test` |
+| `contracts/` | `QommitRegistry` (Solidity, Foundry). Tests: `pnpm forge-std && forge test`. `pnpm qday-attack`: the live classical-key attack |
+| `demo/` | `qday-attack.sh`: the end-to-end Q-Day attack demo |
 | `web/` | Verifier and key-linking site (Vite + React, `@qorechain/qorex-types`, viem), live at [qommit-nine.vercel.app](https://qommit-nine.vercel.app). Run locally: `pnpm install && pnpm dev` |
 
 ## Credits
