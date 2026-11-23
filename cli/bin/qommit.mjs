@@ -225,7 +225,7 @@ async function registryRevokedAt(publicKey, fpr) {
 
 function cmdLink() {
   const key = loadKey();
-  const base = process.env.QOMMIT_LINK_URL || "http://127.0.0.1:5173";
+  const base = process.env.QOMMIT_LINK_URL || "https://qommit-nine.vercel.app";
   console.log(`Open this page and approve the transaction in QoreX (Testnet):\n  ${base}/?fpr=${key.fingerprint}`);
   console.log(`It publishes, from your wallet, a hybrid-signed memo: ${bindMemo(key.fingerprint)}`);
 }

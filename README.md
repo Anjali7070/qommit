@@ -1,10 +1,15 @@
 # 🛡️ Qommit
 
+[![Quantum-signed with Qommit](https://img.shields.io/badge/commits-quantum--signed%20(ML--DSA--87)-4b3cf5)](https://qommit-nine.vercel.app/?repo=Anjali7070/qommit)
+
 **Quantum-proof signatures for your git commits, bound to your QoreChain identity.**
 
 > Your code's signatures will outlive today's cryptography. Qommit makes them quantum-proof.
 
 Built for [Build Before Q-Day — QoreChain Developer Fest](https://build.qorechain.io) (Quantum Pass).
+
+**🌐 Try it: [qommit-nine.vercel.app](https://qommit-nine.vercel.app)**. Paste any GitHub repo and see which commits are
+quantum-signed. This repo: 100%. `torvalds/linux`: 0%.
 
 ## The problem
 
@@ -67,7 +72,7 @@ git log --show-signature -1
 | `qommit init [--address qor1…] [--global]` | Create your key and make git sign with it |
 | `qommit address [qor1…]` | Show or set the identity your signatures claim |
 | `qommit whoami` / `qommit status` | Show your key, identity and on-chain link |
-| `qommit link` | Open the linking page (QoreX approval) |
+| `qommit link` | Open the [linking page](https://qommit-nine.vercel.app) (QoreX approval) |
 | `qommit register` | Record your key in QommitRegistry (needs `QOMMIT_RELAYER_KEY`, see below) |
 | `qommit anchor [commit]` | Timestamp a commit on-chain: proof it was quantum-signed before a given block |
 | `qommit revoke --yes` | Permanently revoke your key |
@@ -96,7 +101,7 @@ relayer can't change what gets recorded, because the contract checks the Qommit 
 |---|---|
 | `cli/` | The `qommit` signer/verifier (Node.js, `@qorechain/pqc`, viem). Tests: `npm test` |
 | `contracts/` | `QommitRegistry` (Solidity, Foundry). Tests: `pnpm forge-std && forge test` |
-| `web/` | Key-linking page (Vite + React, `@qorechain/qorex-types`). Run: `pnpm install && pnpm dev` |
+| `web/` | Verifier and key-linking site (Vite + React, `@qorechain/qorex-types`, viem), live at [qommit-nine.vercel.app](https://qommit-nine.vercel.app). Run locally: `pnpm install && pnpm dev` |
 
 ## Credits
 
