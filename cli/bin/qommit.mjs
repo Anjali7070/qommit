@@ -303,7 +303,7 @@ async function cmdVerify() {
     // Git routes each x509 signature to this program, which does the ML-DSA-87 check and the on-chain identity lookup.
     out = execFileSync(
       "git",
-      ["-c", `gpg.x509.program=${SELF}`, "-c", "gpg.minTrustLevel=undefined", "log", "--no-merges", "--format=%H%x09%G?%x09%GS%x09%s", range],
+      ["-c", `gpg.x509.program=${SELF}`, "-c", "gpg.minTrustLevel=undefined", "log", "--no-merges", "--format=%H%x09%G?%x09%GS%x09%GF%x09%s", range],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 },
     );
   } catch {
@@ -312,18 +312,25 @@ async function cmdVerify() {
   const rows = out.trim() ? out.trim().split("\n").map((l) => l.split("\t")) : [];
   const ok = new Set(allowUnlinked ? ["G", "U"] : ["G"]);
   let failed = 0;
-  for (const [sha, st, signer, subject] of rows) {
+  for (const row of rows) {
+    const [sha, st, signer, fpr, subject] = row;
     const status = LABELS[st] ? st : "E";
     const pass = ok.has(status);
     if (!pass) failed++;
-    console.log(`${sha.slice(0, 7)}  ${LABELS[status]}${signer ? `  ${signer}` : ""}  ${subject}`);
+    let why = "";
+    if (status === "U" && signer.startsWith("qor1")) {
+      // Say why the identity didn't verify: not linked, or QoreChain unreachable from here.
+      const res = await lookupBinding(signer, fpr, { rest: process.env.QOMMIT_REST || DEFAULT_REST });
+      why = res.error ? `  (couldn't reach QoreChain: ${res.error})` : res.binding ? "" : "  (no on-chain link for this key)";
+    }
+    console.log(`${sha.slice(0, 7)}  ${LABELS[status]}${signer ? `  ${signer}` : ""}  ${subject}${why}`);
     if (!pass && gh) console.log(`::error title=Qommit::${sha.slice(0, 7)} ${LABELS[status]}: ${subject}`);
   }
   const summary = `${rows.length - failed}/${rows.length} commits pass (${allowUnlinked ? "quantum-signed" : "quantum-signed with an on-chain identity"})`;
   console.log(`\n${failed ? "✗" : "✓"} ${summary}`);
   if (gh && process.env.GITHUB_STEP_SUMMARY) {
     const md = [`### 🛡️ Qommit: ${summary}`, "", "| Commit | Status | Signer | Subject |", "|---|---|---|---|",
-      ...rows.map(([sha, st, signer, subject]) => `| \`${sha.slice(0, 7)}\` | ${LABELS[LABELS[st] ? st : "E"]} | ${signer || ""} | ${subject.replace(/\|/g, "\\|")} |`)];
+      ...rows.map(([sha, st, signer, , subject]) => `| \`${sha.slice(0, 7)}\` | ${LABELS[LABELS[st] ? st : "E"]} | ${signer || ""} | ${subject.replace(/\|/g, "\\|")} |`)];
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, md.join("\n") + "\n");
   }
   if (failed) process.exit(1);

@@ -33,9 +33,17 @@ export function parseBindings(txSearch, address) {
 async function fetchBindings(address, rest) {
   const query = encodeURIComponent(`message.sender='${address}'`);
   const url = `${rest}/cosmos/tx/v1beta1/txs?query=${query}&order_by=ORDER_BY_DESC&pagination.limit=100`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return parseBindings(await res.json(), address);
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10000), headers: { "User-Agent": "qommit-cli" } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return parseBindings(await res.json(), address);
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw new Error(lastError?.cause?.code || lastError?.message || String(lastError));
 }
 
 /**
