@@ -53,3 +53,18 @@ export function isValidBech32(addr, prefix = "qor") {
   }
   return polymod([...hrpExpand(hrp), ...data]) === 1;
 }
+
+/** Decode a bech32 address to its raw bytes (e.g. qor1… → the 20-byte account, same bytes as its 0x… address). */
+export function decodeBech32(addr) {
+  if (!isValidBech32(addr, addr.slice(0, addr.lastIndexOf("1")))) throw new Error(`invalid bech32 address: ${addr}`);
+  const data = [...addr.slice(addr.lastIndexOf("1") + 1, -6)].map((c) => CHARSET.indexOf(c));
+  const out = [];
+  let acc = 0;
+  let bits = 0;
+  for (const v of data) {
+    acc = ((acc << 5) | v) & 0xffff;
+    bits += 5;
+    if (bits >= 8) out.push((acc >>> (bits -= 8)) & 0xff);
+  }
+  return new Uint8Array(out);
+}

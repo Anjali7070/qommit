@@ -28,7 +28,8 @@
     "url": "https://github.com/Anjali7070/qommit"
   },
   "dependencies": {
-    "@qorechain/pqc": "^0.2.3"
+    "@qorechain/pqc": "^0.2.3",
+    "viem": "^2.58.4"
   },
   "scripts": {
     "test": "node --test"

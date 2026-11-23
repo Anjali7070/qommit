@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { ALG, generateKey, signPayload, verifyPayload, bindMemo } from "../src/core.mjs";
 import { isValidBech32 } from "../src/bech32.mjs";
 import { lookupBinding, DEFAULT_REST } from "../src/chain.mjs";
+import { REGISTRY, registerKey, revokeKey, anchorCommit, readKey, readAnchor } from "../src/registry.mjs";
 
 const KEY_DIR = process.env.QOMMIT_HOME || join(homedir(), ".qommit");
 const KEY_FILE = join(KEY_DIR, "key.json");
@@ -185,6 +186,14 @@ async function gitVerify(sigFile) {
   }
   if (trust === "none" && trustedFingerprints().has(r.fpr)) trust = "local";
 
+  // A revoked key (e.g. reported lost) must not verify, even if it was linked or trusted before.
+  const revokedAt = process.env.QOMMIT_OFFLINE === "1" ? 0 : await registryRevokedAt(r.publicKey, r.fpr);
+  if (revokedAt) {
+    status(`REVKEYSIG ${keyId} ${r.addr || "qommit"}`);
+    status(`TRUST_UNDEFINED 0 qommit`);
+    die(`❌ key ${r.fpr}${who} was REVOKED in QommitRegistry at ${new Date(revokedAt * 1000).toISOString()}`);
+  }
+
   status(`GOODSIG ${keyId} ${r.addr || "qommit"}`);
   status(`VALIDSIG ${r.fpr} 1970-01-01 ${r.ts || 0} 0 4 0 1 10 00 ${r.fpr}`);
   // With gpg.minTrustLevel=fully, git rejects anything below TRUST_FULLY.
@@ -195,6 +204,23 @@ async function gitVerify(sigFile) {
     none: `⚠️  Valid ${ALG} signature${who}, but key ${r.fpr} is not linked on-chain or trusted${note}`,
   }[trust];
   process.stderr.write(`qommit: ${msg}\n`);
+}
+
+// Registry revocation check, cached for an hour so `git log` stays fast. Unreachable registry = not revoked (fail-open
+// here is deliberate: the signature and on-chain link were already verified; revocation is an extra layer).
+async function registryRevokedAt(publicKey, fpr) {
+  const cache = existsSync(CACHE_FILE) ? JSON.parse(readFileSync(CACHE_FILE, "utf8")) : {};
+  const k = `registry:${fpr}`;
+  if (cache[k] && Date.now() - cache[k].fetchedAt < 60 * 60 * 1000) return cache[k].revokedAt;
+  try {
+    const { revokedAt } = await readKey(publicKey);
+    cache[k] = { fetchedAt: Date.now(), revokedAt };
+    mkdirSync(KEY_DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
+    return revokedAt;
+  } catch {
+    return 0;
+  }
 }
 
 function cmdLink() {
@@ -216,6 +242,44 @@ async function cmdStatus() {
   else console.log(`on-chain: ✗ not linked yet. Run: qommit link`);
 }
 
+// ---------- registry commands (EVM; a relayer pays gas, the Qommit key's ML-DSA-87 signature authorises) ----------
+
+const relayer = () => process.env.QOMMIT_RELAYER_KEY;
+const EXPLORER = "https://explore.qore.network/tx/";
+
+async function cmdRegister() {
+  const key = loadKey();
+  const { address } = loadConfig();
+  if (!address) die("no identity set. Run: qommit address <qor1…>");
+  const rec = await readKey(key.publicKey);
+  if (rec.registeredAt) return console.log(`✓ Already registered in QommitRegistry ${REGISTRY} (owner ${rec.owner})`);
+  const hash = await registerKey(key, address, relayer());
+  console.log(`✓ Registered key ${key.fingerprint} for ${address}
+  registry ${REGISTRY}
+  tx ${EXPLORER}${hash}`);
+}
+
+async function cmdRevoke() {
+  if (!flag("--yes")) die("revoking is permanent: this key can never be used or re-registered. Re-run with --yes");
+  const hash = await revokeKey(loadKey(), relayer());
+  console.log(`✓ Key revoked
+  tx ${EXPLORER}${hash}`);
+}
+
+async function cmdAnchor() {
+  const ref = process.argv[3] ?? "HEAD";
+  const commit = execFileSync("git", ["rev-parse", "--verify", `${ref}^{commit}`], { encoding: "utf8" }).trim();
+  if (!/^[0-9a-f]{40}$/.test(commit)) die(`not a SHA-1 commit: ${commit}`);
+  const existing = await readAnchor(commit);
+  if (existing.timestamp) {
+    return console.log(`✓ ${commit.slice(0, 7)} already anchored at ${new Date(existing.timestamp * 1000).toISOString()} (block ${existing.blockNumber})`);
+  }
+  const hash = await anchorCommit(loadKey(), commit, relayer());
+  const a = await readAnchor(commit);
+  console.log(`✓ Anchored ${commit.slice(0, 7)}: proof it was signed with your post-quantum key by ${new Date(a.timestamp * 1000).toISOString()}
+  tx ${EXPLORER}${hash}`);
+}
+
 // ---------- dispatch ----------
 
 const HELP = `qommit — post-quantum (${ALG}) signatures for git
@@ -225,12 +289,15 @@ const HELP = `qommit — post-quantum (${ALG}) signatures for git
   qommit whoami                              show your key fingerprint, identity and on-chain bind memo
   qommit link                                link your key to your qor1 address on QoreChain (via QoreX)
   qommit status                              check whether your key is linked on-chain
+  qommit register                            record your key in the on-chain QommitRegistry
+  qommit anchor [commit]                     timestamp a commit on-chain (default HEAD)
+  qommit revoke --yes                        permanently revoke your key (e.g. lost laptop)
   qommit trust <fingerprint> [label]         trust another developer's key
 
 Then use git as usual: git commit, git log --show-signature, git verify-commit.`;
 
 const args = process.argv.slice(2);
-const commands = { init: cmdInit, address: cmdAddress, whoami: cmdWhoami, trust: cmdTrust, link: cmdLink, status: cmdStatus };
+const commands = { init: cmdInit, address: cmdAddress, whoami: cmdWhoami, trust: cmdTrust, link: cmdLink, status: cmdStatus, register: cmdRegister, revoke: cmdRevoke, anchor: cmdAnchor };
 if (commands[args[0]]) await commands[args[0]]();
 else if (args.some((a) => /^-[a-z]*s[a-z]*$/.test(a) && a.includes("b"))) gitSign(); // git passes -bsau <key>
 else if (args.includes("--verify")) await gitVerify(args[args.indexOf("--verify") + 1]);

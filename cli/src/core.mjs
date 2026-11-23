@@ -51,7 +51,7 @@ export function verifyPayload(armored, payload) {
   // The fingerprint inside the signature must really be the hash of the embedded key.
   if (fingerprintOf(publicKey) !== fpr) return { ok: false, reason: "fingerprint does not match key", fpr, addr, ts, v };
   const ok = mldsa87.verify(publicKey, signedBytes(v, payload, { addr, ts }), unb64(body.sig ?? ""));
-  return ok ? { ok, fpr, addr, ts, v } : { ok, reason: "signature does not match content", fpr, addr, ts, v };
+  return ok ? { ok, fpr, addr, ts, v, publicKey } : { ok, reason: "signature does not match content", fpr, addr, ts, v };
 }
 
 /** The memo for the on-chain binding transaction: "qor1… owns key <fingerprint>". Fits QoreX's 256-byte memo limit. */

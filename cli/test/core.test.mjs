@@ -66,3 +66,14 @@ test("bech32: valid qor address accepted, typos and wrong prefix rejected", () =
 test("bind memo fits QoreX's 256-byte memo limit", () => {
   assert.ok(Buffer.byteLength(bindMemo(key.fingerprint)) <= 256);
 });
+
+test("bech32 decode round-trips and gives the 0x account bytes", async () => {
+  const { decodeBech32 } = await import("../src/bech32.mjs");
+  const bytes = new Uint8Array(20).map((_, i) => i * 13);
+  assert.deepEqual(decodeBech32(encodeBech32("qor", bytes)), bytes);
+  assert.equal(
+    Buffer.from(decodeBech32("qor1jcy2zxezq40rk7jdx540mc3gd89tqlnpgcu767")).toString("hex"),
+    "9608a11b22055e3b7a4d352afde22869cab07e61",
+  );
+  assert.throws(() => decodeBech32("qor1notvalid"));
+});
