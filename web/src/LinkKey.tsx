@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getQorexNative, hasCapability, type QorexShieldState } from "@qorechain/qorex-types";
 import { MsgSend } from "cosmjs-types/cosmos/bank/v1beta1/tx";
 
-import { CHAIN_ID, EXPLORER, FPR_RE, bindMemo, findBindings, type Binding } from "./qommit";
+import { CHAIN_ID, EXPLORER, FPR_RE, bindMemo, findBindings, unbindMemo, type Binding } from "./qommit";
 
 type LinkResult = { txHash: string; shield: QorexShieldState | string };
 
@@ -16,8 +16,11 @@ function friendly(e: unknown): string {
 }
 
 export function LinkKey(): JSX.Element {
-  // The CLI opens this page with ?fpr=<fingerprint>; it can also be pasted.
-  const [fpr, setFpr] = useState(() => (new URLSearchParams(location.search).get("fpr") ?? "").toUpperCase());
+  // The CLI opens this page with ?fpr=<fingerprint>; it can also be pasted. A link can come from anyone (phishing:
+  // "link this key" with the ATTACKER's fingerprint), so the user must confirm it's the key on their own computer.
+  const fromUrl = new URLSearchParams(location.search).get("fpr");
+  const [fpr, setFpr] = useState(() => (fromUrl ?? "").toUpperCase());
+  const [confirmed, setConfirmed] = useState(false);
   const [address, setAddress] = useState<string | null>(null);
   const [bindings, setBindings] = useState<Binding[] | null>(null);
   const [result, setResult] = useState<LinkResult | null>(null);
@@ -55,7 +58,7 @@ export function LinkKey(): JSX.Element {
     }
   }
 
-  async function link(): Promise<void> {
+  async function send(memo: string): Promise<void> {
     const native = getQorexNative();
     if (!native || !address) return;
     if (!hasCapability(native, "signAndBroadcast")) {
@@ -75,7 +78,7 @@ export function LinkKey(): JSX.Element {
       const res = await native.signAndBroadcast({
         chainId: CHAIN_ID,
         messages: [{ typeUrl: "/cosmos.bank.v1beta1.MsgSend", value: MsgSend.encode(msg).finish() }],
-        memo: bindMemo(fpr),
+        memo,
       });
       if (res.code !== 0) throw new Error(`transaction failed on-chain (code ${res.code})`);
       setResult({ txHash: res.txHash, shield: res.shield });
@@ -97,6 +100,12 @@ export function LinkKey(): JSX.Element {
 
       <section style={styles.card}>
         <h2 style={styles.h2}>1. Your Qommit key</h2>
+        {fromUrl && (
+          <p style={styles.warn}>
+            ⚠️ This fingerprint came from the link you opened. Only continue if <code>qommit whoami</code> on{" "}
+            <b>your own computer</b> prints exactly this fingerprint. Linking someone else's key lets them sign as you.
+          </p>
+        )}
         <p style={styles.muted}>
           Run <code>qommit whoami</code> and paste the fingerprint.
         </p>
@@ -108,6 +117,12 @@ export function LinkKey(): JSX.Element {
           style={{ ...styles.input, borderColor: fpr && !fprValid ? "#b00020" : "#ccc" }}
         />
         {fpr && !fprValid && <p style={styles.err}>A fingerprint is 40 hex characters (0-9, A-F).</p>}
+        <label style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "flex-start" }}>
+          <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+          <span>
+            I ran <code>qommit whoami</code> on my own computer and this is my key's fingerprint.
+          </span>
+        </label>
       </section>
 
       <section style={styles.card}>
@@ -133,13 +148,13 @@ export function LinkKey(): JSX.Element {
         {alreadyLinked ? (
           <p>✅ This key is already linked to your address.</p>
         ) : (
-          <button onClick={link} disabled={!address || !fprValid || busy} style={styles.button}>
+          <button onClick={() => void send(bindMemo(fpr))} disabled={!address || !fprValid || !confirmed || busy} style={styles.button}>
             {busy ? "Waiting for QoreX…" : "Link key"}
           </button>
         )}
         {result && (
           <p>
-            {result.shield === "shielded" ? "✅ Linked with a hybrid post-quantum signature." : `Linked (shield: ${result.shield}).`}{" "}
+            {result.shield === "shielded" ? "✅ Done, signed with a hybrid post-quantum signature." : `Sent (shield: ${result.shield}).`}{" "}
             <a href={`${EXPLORER}/tx/${result.txHash}`} target="_blank" rel="noreferrer">
               View transaction
             </a>
@@ -150,10 +165,17 @@ export function LinkKey(): JSX.Element {
       {bindings && bindings.length > 0 && (
         <section style={styles.card}>
           <h2 style={styles.h2}>Keys linked to this address</h2>
+          <p style={styles.muted}>
+            Don't recognise one? Unlink it: QoreX signs <code>qommit:unbind:v1:&lt;fingerprint&gt;</code> and verifiers
+            stop trusting that key for your identity.
+          </p>
           <ul>
             {bindings.map((b) => (
-              <li key={b.txHash}>
-                <code>{b.fingerprint}</code> · block {b.height} · {new Date(b.time).toLocaleString()}
+              <li key={b.txHash} style={{ marginBottom: 6 }}>
+                <code>{b.fingerprint}</code> · block {b.height} · {new Date(b.time).toLocaleString()}{" "}
+                <button onClick={() => void send(unbindMemo(b.fingerprint))} disabled={busy} style={styles.small}>
+                  Unlink
+                </button>
               </li>
             ))}
           </ul>
@@ -178,4 +200,6 @@ const styles: Record<string, React.CSSProperties> = {
   button: { padding: "0.6rem 1.1rem", borderRadius: 6, border: "none", background: "#4b3cf5", color: "white", cursor: "pointer" },
   pre: { background: "#f5f5f5", padding: "0.75rem", borderRadius: 6, overflowX: "auto" },
   err: { color: "#b00020" },
+  warn: { background: "#fff6e0", border: "1px solid #f0d58a", borderRadius: 6, padding: "0.6rem 0.8rem" },
+  small: { padding: "0.15rem 0.6rem", borderRadius: 5, border: "1px solid #b00020", background: "white", color: "#b00020", cursor: "pointer", fontSize: 13 },
 };

@@ -2,6 +2,8 @@
 
 import { mldsa87, pubkeyHash } from "@qorechain/pqc";
 
+import { isValidBech32 } from "./bech32";
+
 const ARMOR_BEGIN = "-----BEGIN SIGNED MESSAGE-----";
 const ARMOR_END = "-----END SIGNED MESSAGE-----";
 const enc = new TextEncoder();
@@ -35,8 +37,14 @@ export function verifyQommit(armored: string, payload: string): SigCheck {
   } catch {
     return { ok: false, reason: "unreadable signature" };
   }
-  const { v, alg, fpr, addr = "", ts = 0 } = body;
+  const { v, alg, fpr } = body;
   if ((v !== 1 && v !== 2) || alg !== "ML-DSA-87") return { ok: false, reason: `unsupported signature (${alg} v${v})` };
+  if (typeof fpr !== "string" || !/^[0-9A-F]{40}$/.test(fpr)) return { ok: false, reason: "malformed fingerprint" };
+  // Same rules as the CLI: v1 never signed a claim or timestamp; a claim must be a real qor1 address.
+  const addr = v === 1 ? "" : body.addr ?? "";
+  const ts = v === 1 ? 0 : body.ts ?? 0;
+  if (addr !== "" && !isValidBech32(addr)) return { ok: false, reason: "identity claim is not a valid qor1 address", fpr };
+  if (!Number.isSafeInteger(ts) || ts < 0) return { ok: false, reason: "malformed timestamp", fpr };
   const publicKey = fromB64(body.pk ?? "");
   if (toHexUpper(pubkeyHash(publicKey, 20)) !== fpr) return { ok: false, reason: "fingerprint does not match key", fpr, addr };
   const prefix = v === 1 ? "qommit-v1:" : `qommit-v2\naddr:${addr}\nts:${ts}\n\n`;

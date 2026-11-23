@@ -4,7 +4,10 @@
   "buildCommand": "pnpm build",
   "outputDirectory": "dist",
   "rewrites": [
-    { "source": "/lcd/:path*", "destination": "https://api-testnet.qore.host/:path*" }
+    {
+      "source": "/lcd/cosmos/tx/v1beta1/txs",
+      "destination": "https://api-testnet.qore.host/cosmos/tx/v1beta1/txs"
+    }
   ],
   "headers": [
     {
@@ -12,7 +15,11 @@
       "headers": [
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "X-Frame-Options", "value": "DENY" }
+        { "key": "X-Frame-Options", "value": "DENY" },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https://api.github.com https://evm-testnet.qore.host; img-src 'self' data: https://img.shields.io; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+        }
       ]
     }
   ]

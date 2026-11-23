@@ -40,8 +40,8 @@ export function App(): JSX.Element {
       {tab === "verify" ? <Verifier /> : <LinkKey />}
       <footer style={{ marginTop: "2.5rem", color: "#888", fontSize: 13 }}>
         QoreChain testnet (qorechain-diana) · QommitRegistry{" "}
-        <a href="https://explore.qore.network/address/0x6F329640728572D6213193171760E88BBf57e03D" target="_blank" rel="noreferrer">
-          <code>0x6F32…e03D</code>
+        <a href="https://explore.qore.network/address/0xB50BB93b40Ff7D7900ee3850699646c47A567482" target="_blank" rel="noreferrer">
+          <code>0xB50B…7482</code>
         </a>{" "}
         ·{" "}
         <a href="https://github.com/Anjali7070/qommit" target="_blank" rel="noreferrer">

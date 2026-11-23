@@ -58,7 +58,7 @@ async function checkCommit(c: GhCommit): Promise<Row> {
   const [bindings, key, anchor] = await Promise.all([
     sig.addr ? findBindingsCached(sig.addr).catch(() => null) : Promise.resolve([]),
     readKey(sig.publicKey!).catch(() => null),
-    readAnchor(c.sha).catch(() => null),
+    readAnchor(c.sha, sig.publicKey!).catch(() => null),
   ]);
   const extra = { fpr: sig.fpr, signer: sig.addr, anchoredAt: anchor?.timestamp || undefined };
   if (key?.revokedAt) {
