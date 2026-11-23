@@ -1,14 +1,17 @@
 {
-  "name": "qommit",
+  "name": "qommit-cli",
   "version": "0.1.0",
   "description": "Post-quantum (ML-DSA-87) signatures for git commits and tags, bound to a QoreChain identity.",
   "type": "module",
   "bin": {
-    "qommit": "bin/qommit.mjs"
+    "qommit": "bin/qommit.mjs",
+    "qommit-cli": "bin/qommit.mjs"
   },
   "files": [
     "bin",
-    "src"
+    "src",
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"
@@ -25,7 +28,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Anjali7070/qommit"
+    "url": "git+https://github.com/Anjali7070/qommit.git",
+    "directory": "cli"
   },
   "dependencies": {
     "@qorechain/pqc": "^0.2.3",
@@ -33,5 +37,9 @@
   },
   "scripts": {
     "test": "node --test"
+  },
+  "homepage": "https://qommit-nine.vercel.app",
+  "bugs": {
+    "url": "https://github.com/Anjali7070/qommit/issues"
   }
 }

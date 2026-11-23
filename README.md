@@ -1,6 +1,6 @@
 # 🛡️ Qommit
 
-[![Quantum-signed with Qommit](https://img.shields.io/badge/commits-quantum--signed%20(ML--DSA--87)-4b3cf5)](https://qommit-nine.vercel.app/?repo=Anjali7070/qommit)
+[![npm](https://img.shields.io/npm/v/qommit-cli?color=4b3cf5)](https://www.npmjs.com/package/qommit-cli) [![Quantum-signed with Qommit](https://img.shields.io/badge/commits-quantum--signed%20(ML--DSA--87)-4b3cf5)](https://qommit-nine.vercel.app/?repo=Anjali7070/qommit)
 
 **Quantum-proof signatures for your git commits, bound to your QoreChain identity.**
 
@@ -59,10 +59,11 @@ Every commit in this repository is signed with ML-DSA-87.
 ## Quick start
 
 ```sh
-cd cli && npm install
-node bin/qommit.mjs init --address qor1…   # creates ~/.qommit/key.json and makes this repo sign every commit
-node bin/qommit.mjs link                   # link the key to your address from QoreX (one approval)
-node bin/qommit.mjs status                 # ✅ linked in block …
+npm install -g qommit-cli                 # https://www.npmjs.com/package/qommit-cli
+cd your-repo
+qommit init --address qor1…   # creates ~/.qommit/key.json and makes this repo sign every commit
+qommit link                   # link the key to your address from QoreX (one approval)
+qommit status                 # ✅ linked in block …
 git commit -m "my first quantum-signed commit"
 git log --show-signature -1
 ```

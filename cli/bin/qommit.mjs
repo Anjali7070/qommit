@@ -112,6 +112,9 @@ function cmdInit() {
     die(global ? "could not write global git config" : "not inside a git repository (cd into one, or use --global)");
   }
   console.log(`✓ Configured git (${global ? "all repositories" : "this repository"}) to sign every commit and tag`);
+  if (SELF.includes("/_npx/")) {
+    console.log(`! You ran qommit through npx, whose cache npm may clean up (git signing would then fail).\n  For lasting use: npm install -g qommit-cli && qommit init${global ? " --global" : ""}`);
+  }
 
   const address = loadConfig().address;
   if (address) console.log(`✓ Signatures will claim identity ${address}`);
